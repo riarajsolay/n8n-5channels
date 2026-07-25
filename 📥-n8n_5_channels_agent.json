@@ -1,0 +1,115 @@
+{
+  "name": "5 Channels - 45 Sec AI Video Agent (Free Stack)",
+  "nodes": [
+    {
+      "id": "webhook",
+      "name": "Webhook - Product Input",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 1,
+      "position": [
+        240,
+        300
+      ],
+      "parameters": {
+        "path": "product-agent",
+        "options": {}
+      },
+      "webhookId": "product-agent-webhook"
+    },
+    {
+      "id": "set-product",
+      "name": "Set Product Data",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3,
+      "position": [
+        460,
+        300
+      ],
+      "parameters": {
+        "keepOnlySet": true,
+        "values": {
+          "string": [
+            {
+              "name": "product_name",
+              "value": "={{ $json[\"product_name\"] || \"Shining Diva Black Stone Bracelet 4814b\" }}"
+            },
+            {
+              "name": "amazon_link",
+              "value": "={{ $json[\"amazon_link\"] || \"https://www.amazon.in/dp/B06VWWD572\" }}"
+            },
+            {
+              "name": "affiliate_tag",
+              "value": "riarajstore-21"
+            },
+            {
+              "name": "channel",
+              "value": "={{ $json[\"channel\"] || \"BEAUTY\" }}"
+            },
+            {
+              "name": "features",
+              "value": "={{ $json[\"features\"] || \"Rs.282 Only, 79% OFF, Party Wear Kada\" }}"
+            },
+            {
+              "name": "affiliate_link",
+              "value": "=https://www.amazon.in/dp/{{ $json.amazon_link.split('/dp/')[1] || 'B06VWWD572' }}?tag=riarajstore-21"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "openai-script",
+      "name": "OpenAI - Generate 45s Script",
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 1.3,
+      "position": [
+        680,
+        300
+      ],
+      "parameters": {
+        "prompt": {
+          "messages": [
+            {
+              "role": "system",
+              "content": "You are Telugu YouTube Shorts script writer for 45 sec AI avatar videos. Use Roller Bag formula: Hook(0-5s), Pain(5-15s), Reveal(15-28s), Demo(28-38s), CTA(38-45s). For each scene give voiceover Telugu, AI character prompt for CapCut AI Avatar (Indian girl/boy, dress, emotion, background supermarket/bedroom/farm), visual instruction, text overlay BIG BOLD like POCKETSIZED. Output JSON with 5 scenes."
+            },
+            {
+              "role": "user",
+              "content": "Product: {{$json.product_name}} Channel: {{$json.channel}} Features: {{$json.features}} Affiliate: {{$json.affiliate_link}} Create 45s script JSON"
+            }
+          ]
+        },
+        "options": {
+          "responseFormat": "json_object"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Webhook - Product Input": {
+      "main": [
+        [
+          {
+            "node": "Set Product Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Product Data": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Generate 45s Script",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "meta": {
+    "instanceId": "5-channels-free-agent"
+  }
+}
