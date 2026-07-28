@@ -15,9 +15,7 @@ RUN pip3 install --no-cache-dir \
     requests \
     groq \
     openai
-
 USER node
-
 # Keep your existing envs
 ENV N8N_BASIC_AUTH_ACTIVE=true
 ENV DB_TYPE=postgresdb
