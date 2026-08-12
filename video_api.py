@@ -10,20 +10,20 @@ import subprocess
 import gc
 from PIL import Image, ImageDraw, ImageFont
 
-app = FastAPI(title="Telugu Video Factory - FINAL VERIFIED v7 Natural + No Mismatch")
+app = FastAPI(title="Telugu Video Factory - ULTIMATE NATURAL v8 with Tricks")
 
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 
-# VERIFIED: Best natural v3 voices - tested, no robo
+# ULTIMATE: Use female voices for clarity + pitch shift for male = super natural
 VOICE_PROFILES = {
-    "young_female": {"voice": "shruti", "pace": 1.0, "desc": "Young girl - most natural clear"},
-    "young_male": {"voice": "amit", "pace": 1.0, "desc": "Young boy - natural, not robo"},
-    "middle_female": {"voice": "kavya", "pace": 0.98, "desc": "Mother - soft natural"},
-    "middle_male": {"voice": "rohan", "pace": 0.98, "desc": "Father - natural"},
-    "old_female": {"voice": "kavitha", "pace": 0.92, "desc": "Ammamma - warm slow, not robo (0.80 is too slow)"},
-    "old_male": {"voice": "anand", "pace": 0.92, "desc": "Thathayya - deep warm, not robo"},
-    "kid_female": {"voice": "tanya", "pace": 1.05, "desc": "Papa - cute"},
-    "kid_male": {"voice": "aayan", "pace": 1.05, "desc": "Babu - cute"},
+    "young_female": {"voice": "shruti", "pace": 1.0, "pitch_shift": 1.0, "desc": "Shruti - most clear natural"},
+    "young_male": {"voice": "shruti", "pace": 1.0, "pitch_shift": 0.85, "desc": "Shruti pitched to male - natural + clear (trick)"},
+    "middle_female": {"voice": "kavya", "pace": 0.98, "pitch_shift": 1.0, "desc": "Kavya natural"},
+    "middle_male": {"voice": "kavya", "pace": 0.98, "pitch_shift": 0.85, "desc": "Kavya pitched to male"},
+    "old_female": {"voice": "kavitha", "pace": 0.92, "pitch_shift": 1.0, "desc": "Kavitha warm"},
+    "old_male": {"voice": "kavitha", "pace": 0.92, "pitch_shift": 0.80, "desc": "Kavitha pitched to old male - deep natural"},
+    "kid_female": {"voice": "tanya", "pace": 1.05, "pitch_shift": 1.0},
+    "kid_male": {"voice": "tanya", "pace": 1.05, "pitch_shift": 0.90},
 }
 
 class VideoRequest(BaseModel):
@@ -54,54 +54,50 @@ def transliterate_to_telugu(text):
         pass
     return text
 
-def make_natural_text(text):
-    """Natural delivery - clear words, not robo"""
+def make_natural_chunks(text):
+    """Break long sentence into small natural chunks - home style"""
     text = text.strip()
-    # Keep original punctuation if already natural
-    # Only add if missing - avoid over punctuation which causes robo
-    if text and text[-1] not in ('!', '?', '।', '.', ','):
-        # Check emotion words - Telugu + English
-        if any(w in text for w in ['అమ్మ', 'అరే', 'హా', 'అయ్యో']) or any(w in text.lower() for w in ['ha', 'are', 'amma', 'ayyo']):
-            text = text + "!"
+    # Split by commas and natural pause points
+    # Telugu natural pauses: , ! ? వల్ల
+    chunks = re.split(r'[,\!।\n]+', text)
+    chunks = [c.strip() for c in chunks if c.strip()]
+    # If no comma, split by spaces into 4-5 word chunks
+    final_chunks = []
+    for ch in chunks:
+        words = ch.split()
+        if len(words) > 6:
+            # Split into 4-word groups for natural
+            for i in range(0, len(words), 4):
+                final_chunks.append(" ".join(words[i:i+4]))
         else:
-            text = text + "."
-    return text
+            final_chunks.append(ch)
+    return final_chunks
 
-def detect_characters_verified(script: str):
-    """VERIFIED: 20+ Telugu + English names tested - 0% mismatch"""
+def detect_verified(script: str):
     fallback = {}
     names = re.findall(r'([A-Za-z\u0C00-\u0C7F]+)\s*:', script)
     for n in names:
         orig_n = n.strip()
         n_low = orig_n.lower()
-        
-        # OLD FEMALE - Telugu + English - checked
-        if any(k in orig_n for k in ["అమ్మ", "అవ్వ", "బామ్మ", "అమ్మమ్మ", "అత్త", "ఆంటీ", "బొమ్మ"]) or any(k in n_low for k in ["amma", "avva", "bamma", "ammamma", "aunty"]):
-            fallback[orig_n] = {"gender":"female","age_group":"old", "voice":"kavitha"}
+        if any(k in orig_n for k in ["అమ్మ", "అవ్వ", "బామ్మ", "అమ్మమ్మ", "అత్త"]) or any(k in n_low for k in ["amma","avva","ammamma"]):
+            fallback[orig_n] = {"gender":"female","age_group":"old"}
             continue
-        # OLD MALE
-        if any(k in orig_n for k in ["తాత", "నాన్న", "అయ్య", "మామ", "తాతయ్య"]) or any(k in n_low for k in ["thatha", "nanna", "tata", "mama"]):
-            fallback[orig_n] = {"gender":"male","age_group":"old", "voice":"anand"}
+        if any(k in orig_n for k in ["తాత", "నాన్న", "అయ్య", "తాతయ్య"]) or any(k in n_low for k in ["thatha","nanna","tata"]):
+            fallback[orig_n] = {"gender":"male","age_group":"old"}
             continue
-        # KID
-        if any(k in orig_n for k in ["చిన్న", "చింటు", "చింటూ", "పాప", "బాబు", "పిల్ల", "కన్నా"]) or any(k in n_low for k in ["chinna", "chintu", "papa", "babu", "pilla"]):
+        if any(k in orig_n for k in ["చిన్న", "పాప", "బాబు","చింటు","చింటూ"]) or any(k in n_low for k in ["chinna","papa","babu"]):
             if orig_n.endswith('ా') or n_low.endswith('a'):
-                fallback[orig_n] = {"gender":"female","age_group":"kid", "voice":"tanya"}
+                fallback[orig_n] = {"gender":"female","age_group":"kid"}
             else:
-                fallback[orig_n] = {"gender":"male","age_group":"kid", "voice":"aayan"}
+                fallback[orig_n] = {"gender":"male","age_group":"kid"}
             continue
-        # YOUNG FEMALE - ends with 'a' or 'ా' or known female names
-        if orig_n.endswith('ా') or n_low.endswith('a') or any(k in orig_n for k in ["సీత", "గీత", "ప్రియ", "కావ్య", "శ్రుతి", "లక్ష్మి"]):
-            fallback[orig_n] = {"gender":"female","age_group":"young", "voice":"shruti"}
+        if orig_n.endswith('ా') or n_low.endswith('a') or any(k in orig_n for k in ["సీత","గీత","ప్రియ","కావ్య"]):
+            fallback[orig_n] = {"gender":"female","age_group":"young"}
             continue
-        # YOUNG MALE - default
-        fallback[orig_n] = {"gender":"male","age_group":"young", "voice":"amit"}
-        
-    print(f"VERIFIED Detection: {fallback}")
+        fallback[orig_n] = {"gender":"male","age_group":"young"}
     return fallback
 
 def get_voice_verified(gender, age_group):
-    """STRICT: No mismatch ever - female gets female, male gets male"""
     if gender == "female":
         if age_group == "old": return VOICE_PROFILES["old_female"]
         if age_group == "kid": return VOICE_PROFILES["kid_female"]
@@ -113,11 +109,12 @@ def get_voice_verified(gender, age_group):
         if age_group == "middle": return VOICE_PROFILES["middle_male"]
         return VOICE_PROFILES["young_male"]
 
-def generate_sarvam_audio(text, voice_name, pace, audio_file):
+def generate_and_enhance(text, voice_name, pace, pitch_shift, audio_file):
+    """Generate + Enhance for natural + pitch shift for male"""
     if not SARVAM_API_KEY:
         raise Exception("SARVAM_API_KEY missing")
-    natural = make_natural_text(text)
-    telugu_text = transliterate_to_telugu(natural)
+    
+    telugu_text = transliterate_to_telugu(text) if not is_telugu_script(text) else text
     
     url = "https://api.sarvam.ai/text-to-speech"
     headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
@@ -128,69 +125,78 @@ def generate_sarvam_audio(text, voice_name, pace, audio_file):
         "pace": pace,
         "model": "bulbul:v3"
     }
-    print(f"TTS: {voice_name} pace={pace} -> {telugu_text}")
     r = requests.post(url, json=payload, headers=headers, timeout=30)
     if r.status_code != 200:
-        print(f"Sarvam ERROR: {r.text[:500]}")
+        print(f"Sarvam Error: {r.text[:300]}")
     r.raise_for_status()
     data = r.json()
-    audio_b64 = data["audios"][0]
-    with open(audio_file, "wb") as f:
-        f.write(base64.b64decode(audio_b64))
+    tmp_raw = audio_file.replace(".wav", "_raw.wav")
+    with open(tmp_raw, "wb") as f:
+        f.write(base64.b64decode(data["audios"][0]))
+    
+    # TRICK: Pitch shift for male voices + enhance for natural
+    if pitch_shift != 1.0:
+        # Female voice -> Male pitch: lower pitch, keep clarity
+        # asetrate trick: 0.85 = 15% deeper = natural male
+        cmd = [
+            "ffmpeg", "-y", "-i", tmp_raw,
+            "-af", f"asetrate=22050*{pitch_shift},aresample=22050,highpass=f=80,lowpass=f=8000,loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-c:a", "pcm_s16le",
+            audio_file
+        ]
+    else:
+        # Female natural enhance only
+        cmd = [
+            "ffmpeg", "-y", "-i", tmp_raw,
+            "-af", "highpass=f=80,lowpass=f=8000,loudnorm=I=-16:TP=-1.5:LRA=11",
+            "-c:a", "pcm_s16le",
+            audio_file
+        ]
+    subprocess.run(cmd, check=True, capture_output=True)
+    try:
+        os.remove(tmp_raw)
+    except:
+        pass
     return True
 
-def create_background_image(channel, topic, width=720, height=1280):
-    img = Image.new('RGB', (width, height), (15, 23, 42))
+def create_bg(channel, topic, w=720, h=1280):
+    img = Image.new('RGB', (w, h), (15, 23, 42))
     draw = ImageDraw.Draw(img)
     try:
-        font_channel = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
-        font_topic = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 30)
+        f1 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 48)
+        f2 = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 28)
     except:
-        font_channel = ImageFont.load_default()
-        font_topic = ImageFont.load_default()
-    draw.text((width//2, 120), channel[:30], font=font_channel, fill=(255,221,0), anchor="mm")
-    y = 300
+        f1 = ImageFont.load_default(); f2 = ImageFont.load_default()
+    draw.text((w//2, 120), channel[:30], font=f1, fill=(255,221,0), anchor="mm")
+    y=300
     for line in topic.split('\n')[:6]:
         if ':' in line:
-            name, dia = line.split(':',1)
-            # Color by gender - blue for female old, orange for male young
-            is_female_old = any(k in name for k in ["అమ్మ", "Ammamma", "amma"])
-            col = (100,200,255) if is_female_old else (255,180,100)
-            draw.text((width//2, y), f"{name.strip()}:", font=font_topic, fill=col, anchor="mm")
-            y+=35
-            # Wrap
-            txt = dia.strip()[:70]
-            draw.text((width//2, y), txt, font=font_topic, fill=(255,255,255), anchor="mm")
-            y+=50
-        else:
-            draw.text((width//2, y), line[:60], font=font_topic, fill=(255,255,255), anchor="mm")
-            y+=40
+            name,dia=line.split(':',1)
+            col=(100,200,255) if any(k in name for k in ["అమ్మ","amma"]) else (255,180,100)
+            draw.text((w//2,y), f"{name.strip()}:", font=f2, fill=col, anchor="mm"); y+=35
+            draw.text((w//2,y), dia.strip()[:65], font=f2, fill=(255,255,255), anchor="mm"); y+=50
         y+=15
-        if y>1050: break
-    path = f"/tmp/bg_{uuid.uuid4().hex[:6]}.png"
-    img.save(path)
-    return path
+    p=f"/tmp/bg_{uuid.uuid4().hex[:6]}.png"; img.save(p); return p
 
 @app.get("/")
 def home():
-    return {"status": "FINAL VERIFIED v7 - Natural + No Mismatch", "verified": "20 names tested"}
+    return {"status":"ULTIMATE v8 - Pitch Shift Trick for Natural Male"}
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status":"ok"}
 
 @app.post("/generate")
 async def generate_video(req: VideoRequest):
-    safe = "".join([c for c in req.channel if c.isalnum() or c in "_-"])[:20]
-    uid = uuid.uuid4().hex[:6]
-    audio_file = f"/tmp/{safe}_{uid}_final.mp3"
-    video_file = f"/tmp/{safe}_{uid}.mp4"
-    list_file = f"/tmp/{safe}_{uid}_list.txt"
-    temp_audios = []
-    
+    safe="".join([c for c in req.channel if c.isalnum() or c in "_-"])[:20]
+    uid=uuid.uuid4().hex[:6]
+    audio_file=f"/tmp/{safe}_{uid}_final.mp3"
+    video_file=f"/tmp/{safe}_{uid}.mp4"
+    list_file=f"/tmp/{safe}_{uid}_list.txt"
+    temp_audios=[]
     try:
-        detected = detect_characters_verified(req.topic)
-        dialogues = []
+        detected=detect_verified(req.topic)
+        dialogues=[]
         for line in req.topic.split('\n'):
             line=line.strip()
             if not line: continue
@@ -199,24 +205,29 @@ async def generate_video(req: VideoRequest):
                 name=name.strip()
                 info=detected.get(name, {"gender":"female" if name.endswith('ా') or name.lower().endswith('a') else "male","age_group":"young"})
                 vp=get_voice_verified(info['gender'], info['age_group'])
-                dialogues.append((name,dia.strip(),vp))
+                # Break dialogue into natural chunks
+                chunks=make_natural_chunks(dia.strip())
+                for ch in chunks:
+                    dialogues.append((name,ch,vp))
             else:
                 vp=VOICE_PROFILES["young_female"]
-                dialogues.append(("Narrator",line,vp))
+                chunks=make_natural_chunks(line)
+                for ch in chunks:
+                    dialogues.append(("Narrator",ch,vp))
 
         for idx,(char_name,dia_text,vp) in enumerate(dialogues):
             tmp=f"/tmp/{safe}_{uid}_{idx}.wav"
-            print(f"[{idx+1}] {char_name} -> {vp['voice']} ({vp['desc']}) pace={vp['pace']}")
+            print(f"[{idx+1}] {char_name} -> {vp['voice']} pitch={vp['pitch_shift']} pace={vp['pace']} : {dia_text}")
             try:
-                generate_sarvam_audio(dia_text, vp['voice'], vp['pace'], tmp)
+                generate_and_enhance(dia_text, vp['voice'], vp['pace'], vp['pitch_shift'], tmp)
                 temp_audios.append(tmp)
-                # Natural pause 0.4 sec between dialogues - like home conversation
+                # Natural pause 0.35 sec
                 sil=f"/tmp/{safe}_{uid}_{idx}_sil.wav"
-                subprocess.run(["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=22050:cl=mono","-t","0.4","-c:a","pcm_s16le",sil], capture_output=True)
+                subprocess.run(["ffmpeg","-y","-f","lavfi","-i","anullsrc=r=22050:cl=mono","-t","0.35","-c:a","pcm_s16le",sil], capture_output=True)
                 if os.path.exists(sil):
                     temp_audios.append(sil)
             except Exception as e:
-                print(f"Failed {char_name}: {e}")
+                print(f"Fail {char_name}: {e}")
                 continue
 
         if not temp_audios:
@@ -233,12 +244,11 @@ async def generate_video(req: VideoRequest):
         except:
             duration=5.0
         duration=max(5.0,duration)
-        bg_image=create_background_image(req.channel, req.topic)
-        cmd=["ffmpeg","-y","-loop","1","-i",bg_image,"-i",audio_file,"-c:v","libx264","-t",str(duration),"-pix_fmt","yuv420p","-c:a","aac","-b:a","128k","-shortest","-vf","scale=720:1280",video_file]
+        bg=create_bg(req.channel, req.topic)
+        cmd=["ffmpeg","-y","-loop","1","-i",bg,"-i",audio_file,"-c:v","libx264","-t",str(duration),"-pix_fmt","yuv420p","-c:a","aac","-b:a","128k","-shortest","-vf","scale=720:1280",video_file]
         subprocess.run(cmd, check=True, capture_output=True)
-        
         try:
-            os.remove(bg_image); os.remove(list_file); os.remove(audio_file)
+            os.remove(bg); os.remove(list_file); os.remove(audio_file)
             for tf in temp_audios:
                 if os.path.exists(tf): os.remove(tf)
         except:
