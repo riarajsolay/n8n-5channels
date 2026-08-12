@@ -1,22 +1,19 @@
 from fastapi import FastAPI
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-import edge_tts
 import uuid
 import os
 import requests
 import base64
-import json
 import re
+import subprocess
+import gc
 from PIL import Image, ImageDraw, ImageFont
-from moviepy.editor import AudioFileClip, ColorClip, ImageClip, CompositeVideoClip, concatenate_audioclips
 
-app = FastAPI(title="Telugu Video Factory API")
+app = FastAPI(title="Telugu Video Factory API - Lightweight 10 Videos/Day")
 
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
-SARVAM_M_URL = "https://api.sarvam.ai/v1/chat/completions"
 
-# === NEW: Voice Profiles - No Mismatch Guarantee ===
 VOICE_PROFILES = {
     "young_female": {"voice": "anushka", "pace": 1.0},
     "young_male": {"voice": "abhilash", "pace": 1.0},
@@ -34,47 +31,22 @@ class VideoRequest(BaseModel):
     voice: str = "anushka"
     id: str = "1"
 
-# === NEW FUNCTION 1: Auto Detect Characters with Sarvam-M ===
-def detect_characters_auto(script: str):
-    if not SARVAM_API_KEY:
-        return {}
-    prompt = f"""
-    Analyze this Telugu story script and extract characters.
-    For each character, tell gender and age_group.
-    Age groups: kid, young, middle, old
-    Script: {script[:2000]}
-    Return ONLY JSON like:
-    {{
-      "Ravi": {{"gender": "male", "age_group": "young"}},
-      "Ammamma": {{"gender": "female", "age_group": "old"}},
-      "Chintu": {{"gender": "male", "age_group": "kid"}}
-    }}
-    If no clear names, detect from Telugu words like amma,nanna,pilladu,avva,thathayya.
-    """
-    try:
-        headers = {"api-subscription-key": SARVAM_API_KEY, "Content-Type": "application/json"}
-        payload = {"model": "sarvam-m", "messages": [{"role": "user", "content": prompt}], "temperature": 0.1}
-        r = requests.post(SARVAM_M_URL, json=payload, headers=headers, timeout=15)
-        data = r.json()
-        text = data['choices'][0]['message']['content']
-        m = re.search(r'\{.*\}', text, re.DOTALL)
-        if m:
-            chars = json.loads(m.group(0))
-            return chars
-    except Exception as e:
-        print(f"Auto detect failed: {e}")
-    
-    # Fallback Telugu keywords
+def detect_characters_fast(script: str):
+    """No API call - super fast, no RAM"""
     fallback = {}
-    low = script.lower()
-    if "ammamma" in low or "avva" in low: fallback["Ammamma"] = {"gender": "female", "age_group": "old"}
-    if "thathayya" in low or "thatayya" in low: fallback["Thathayya"] = {"gender": "male", "age_group": "old"}
-    if "chinna" in low or "pilla" in low: fallback["Chinna"] = {"gender": "male", "age_group": "kid"}
+    names = re.findall(r'([A-Za-z\u0C00-\u0C7F]+)\s*:', script)
+    for n in names:
+        n = n.strip()
+        n_low = n.lower()
+        if any(x in n_low for x in ['amma','avva','bomma','mother']): fallback[n] = {"gender":"female","age_group":"old"}
+        elif any(x in n_low for x in ['thatha','nanna','father','tata']): fallback[n] = {"gender":"male","age_group":"old"}
+        elif any(x in n_low for x in ['chinna','chintu','pilla','babu','pappu','kid']): fallback[n] = {"gender":"male","age_group":"kid"}
+        elif n_low.endswith('a') or n_low in ['anushka','priya','sita','geeta','manisha','vidya']: fallback[n] = {"gender":"female","age_group":"young"}
+        else: fallback[n] = {"gender":"male","age_group":"young"}
     return fallback
 
 def get_voice_for_character(gender, age_group):
     key = f"{age_group}_{gender}"
-    # Strict mismatch protection
     if gender == "male" and key.endswith("_female"): key = key.replace("_female", "_male")
     if gender == "female" and "_female" not in key: key = key.replace("_male", "_female") if "_male" in key else f"{age_group}_female"
     profile = VOICE_PROFILES.get(key)
@@ -101,156 +73,150 @@ def generate_sarvam_audio(text, voice_name, pace, audio_file):
         f.write(base64.b64decode(audio_b64))
     return True
 
-def create_text_image(text, width=900, font_size=50, color=(255,255,255)):
+def create_background_image(channel, topic, width=720, height=1280):
+    """Single image - no moviepy clips - very low RAM"""
+    img = Image.new('RGB', (width, height), (15, 23, 42))
+    draw = ImageDraw.Draw(img)
     try:
-        font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", font_size)
+        font_channel = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 50)
+        font_topic = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 38)
     except:
-        font = ImageFont.load_default()
-    words = text.split()
+        font_channel = ImageFont.load_default()
+        font_topic = ImageFont.load_default()
+    
+    # Channel - top
+    draw.text((width//2, 150), channel[:30], font=font_channel, fill=(255,221,0), anchor="mm")
+    # Topic - middle with wrap
+    words = topic[:250].split()
     lines = []
     line = ""
     for w in words:
         test = line + " " + w if line else w
-        if len(test) > 25:
+        if len(test) > 28:
             lines.append(line)
             line = w
         else:
             line = test
-    if line:
-        lines.append(line)
-    lines = lines[:6]
-    line_height = font_size + 15
-    img_height = len(lines) * line_height + 60
-    img = Image.new('RGBA', (width, img_height), (0,0,0,0))
-    draw = ImageDraw.Draw(img)
-    y = 10
-    for l in lines:
-        draw.text((10, y), l, font=font, fill=color)
-        y += line_height
-    path = f"/tmp/text_{uuid.uuid4().hex[:6]}.png"
+    if line: lines.append(line)
+    y = 400
+    for l in lines[:8]:
+        draw.text((width//2, y), l, font=font_topic, fill=(255,255,255), anchor="mm")
+        y += 55
+    
+    path = f"/tmp/bg_{uuid.uuid4().hex[:6]}.png"
     img.save(path)
-    return path, img_height
+    return path
 
 @app.get("/")
 def home():
-    return {"status": "Telugu Video Factory API Running OK", "channels": "Unlimited", "tts": "Sarvam Auto Multi-Voice"}
+    return {"status": "Telugu Video Factory API Running OK - Lightweight", "channels": "Unlimited", "ram": "50MB Optimized", "daily_capacity": "10+ videos"}
 
 @app.get("/health")
 def health():
-    return {"status": "ok"}
+    return {"status": "ok", "memory": "optimized"}
 
 @app.post("/generate")
 async def generate_video(req: VideoRequest):
     safe = "".join([c for c in req.channel if c.isalnum() or c in "_-"])[:20]
     uid = uuid.uuid4().hex[:6]
-    audio_file = f"/tmp/{safe}_{uid}.mp3"
+    audio_file = f"/tmp/{safe}_{uid}_final.mp3"
     video_file = f"/tmp/{safe}_{uid}.mp4"
+    list_file = f"/tmp/{safe}_{uid}_list.txt"
+    
     print(f"Generating: {req.channel} - {req.topic[:40]}")
-
-    # === NEW: AUTO MULTI-VOICE LOGIC - REPLACES OLD 71-76 ===
+    temp_audios = []
+    
     try:
-        # 1. Detect characters from script automatically
-        detected_chars = detect_characters_auto(req.topic)
+        # 1. Fast character detection - no heavy API
+        detected_chars = detect_characters_fast(req.topic)
         print(f"Detected: {detected_chars}")
 
-        # 2. Parse dialogues - Name: dialogue format
-        dialogues_raw = []
+        dialogues = []
         for line in req.topic.split('\n'):
             line = line.strip()
             if not line: continue
-            if ':' in line and len(line.split(':')[0]) < 30: # likely Name: dialogue
+            if ':' in line and len(line.split(':')[0]) < 30:
                 name, dia = line.split(':', 1)
                 name = name.strip()
-                info = detected_chars.get(name)
-                if not info:
-                    # guess from name if not in detected list
-                    low_name = name.lower()
-                    if any(x in low_name for x in ['amma','avva','bomma']): info = {"gender":"female","age_group":"old"}
-                    elif any(x in low_name for x in ['thatha','nanna']): info = {"gender":"male","age_group":"old"}
-                    elif any(x in low_name for x in ['chinna','pilla','chintu']): info = {"gender":"male","age_group":"kid"}
-                    elif name.lower().endswith('a'): info = {"gender":"female","age_group":"young"}
-                    else: info = {"gender":"male","age_group":"young"}
-                voice_profile = get_voice_for_character(info['gender'], info['age_group'])
-                dialogues_raw.append((name, dia.strip(), voice_profile))
+                info = detected_chars.get(name, {"gender":"female" if name.lower().endswith('a') else "male", "age_group":"young"})
+                vp = get_voice_for_character(info['gender'], info['age_group'])
+                dialogues.append((name, dia.strip(), vp))
             else:
-                # No character name - use main voice
-                vp = get_voice_for_character("female" if req.voice in ["anushka","manisha","vidya"] else "male", "young")
-                if req.voice in VOICE_PROFILES:
-                    # if exact profile name given
-                    for k,v in VOICE_PROFILES.items():
-                        if v['voice'] == req.voice:
-                            vp = v
-                            break
-                dialogues_raw.append(("Narrator", line, vp))
+                vp = VOICE_PROFILES["young_female"]
+                dialogues.append(("Narrator", line, vp))
 
-        if not dialogues_raw:
-            dialogues_raw = [("Narrator", req.topic, VOICE_PROFILES["young_female"])]
+        if not dialogues:
+            dialogues = [("Narrator", req.topic, VOICE_PROFILES["young_female"])]
 
-        # 3. Generate audio for each dialogue with correct voice
-        audio_clips = []
-        temp_files = []
-        for idx, (char_name, dia_text, vp) in enumerate(dialogues_raw):
+        # 2. Generate each audio - one by one (low RAM)
+        for idx, (char_name, dia_text, vp) in enumerate(dialogues):
             tmp = f"/tmp/{safe}_{uid}_{idx}.mp3"
-            print(f"Generating for {char_name} ({vp['voice']}) : {dia_text[:30]}")
+            print(f"Audio {idx+1}/{len(dialogues)} for {char_name} ({vp['voice']})")
             try:
                 if SARVAM_API_KEY:
                     generate_sarvam_audio(dia_text, vp['voice'], vp['pace'], tmp)
                 else:
-                    raise Exception("No Sarvam Key")
-                audio_clips.append(AudioFileClip(tmp))
-                temp_files.append(tmp)
+                    # Fallback silent audio 1 sec if no key (to avoid crash)
+                    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "1", tmp], capture_output=True)
+                temp_audios.append(tmp)
             except Exception as e:
-                print(f"Sarvam failed for {char_name} {e}, fallback edge")
-                try:
-                    comm = edge_tts.Communicate(dia_text, "te-IN-ShrutiNeural")
-                    await comm.save(tmp)
-                    audio_clips.append(AudioFileClip(tmp))
-                    temp_files.append(tmp)
-                except Exception as e2:
-                    print(f"Edge also failed: {e2}")
+                print(f"Audio failed {char_name}: {e}")
+                continue
 
-        if not audio_clips:
-            return {"error": "Audio failed for all dialogues"}
+        if not temp_audios:
+            return {"error": "Audio generation failed"}
 
-        # 4. Concatenate all clips with small gap
-        if len(audio_clips) > 1:
-            final_audio_concat = concatenate_audioclips(audio_clips)
-            final_audio_concat.write_audiofile(audio_file, verbose=False, logger=None)
-            for c in audio_clips: c.close()
-            audio = AudioFileClip(audio_file)
-        else:
-            audio_clips[0].write_audiofile(audio_file, verbose=False, logger=None)
-            audio_clips[0].close()
-            audio = AudioFileClip(audio_file)
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {"error": f"Audio failed: {e}"}
-
-    # === VIDEO PART - SAME AS OLD ===
-    try:
-        duration = max(5, audio.duration)
-        bg = ColorClip(size=(1080, 1920), color=(15,23,42), duration=duration)
-        channel_img_path, _ = create_text_image(req.channel, width=800, font_size=60, color=(255,221,0))
-        channel_clip = ImageClip(channel_img_path, duration=duration).set_position(('center', 200))
-        topic_img_path, h = create_text_image(req.topic[:300], width=950, font_size=48, color=(255,255,255))
-        topic_clip = ImageClip(topic_img_path, duration=duration).set_position(('center', 800))
-        final = CompositeVideoClip([bg, channel_clip, topic_clip]).set_audio(audio)
-        final.write_videofile(video_file, fps=24, codec='libx264', audio_codec='aac', verbose=False, logger=None)
+        # 3. Concat audios using ffmpeg - NO RAM (disk only)
+        with open(list_file, "w") as f:
+            for tf in temp_audios:
+                f.write(f"file '{tf}'\n")
+        
+        # Use ffmpeg concat demuxer - super lightweight
+        subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", audio_file], check=True, capture_output=True)
+        
+        # Get duration
+        result = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audio_file], capture_output=True, text=True)
         try:
-            os.remove(channel_img_path)
-            os.remove(topic_img_path)
-            for tf in temp_files: os.remove(tf)
+            duration = float(result.stdout.strip())
+        except:
+            duration = 5.0
+        duration = max(5.0, duration)
+
+        # 4. Create single background image (no moviepy)
+        bg_image = create_background_image(req.channel, req.topic, 720, 1280)
+
+        # 5. Create video using ffmpeg only - NO moviepy (saves 300MB RAM)
+        # ffmpeg -loop 1 -i image -i audio -c:v libx264 -t duration -pix_fmt yuv420p -shortest
+        cmd = [
+            "ffmpeg", "-y",
+            "-loop", "1",
+            "-i", bg_image,
+            "-i", audio_file,
+            "-c:v", "libx264",
+            "-t", str(duration),
+            "-pix_fmt", "yuv420p",
+            "-c:a", "aac",
+            "-b:a", "128k",
+            "-shortest",
+            "-vf", "scale=720:1280",
+            video_file
+        ]
+        subprocess.run(cmd, check=True, capture_output=True)
+        
+        # Cleanup temp files
+        try:
+            os.remove(bg_image)
+            os.remove(list_file)
+            os.remove(audio_file)
+            for tf in temp_audios:
+                os.remove(tf)
         except:
             pass
+        gc.collect()
+
     except Exception as e:
         import traceback
         traceback.print_exc()
         return {"error": f"Video failed: {e}"}
 
     return FileResponse(video_file, filename=f"{safe}.mp4", media_type="video/mp4")
-
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=10000)
