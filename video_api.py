@@ -10,38 +10,43 @@ import subprocess
 import gc
 from PIL import Image, ImageDraw, ImageFont
 
-app = FastAPI(title="Telugu Video Factory API - Lightweight 10 Videos/Day")
+app = FastAPI(title="Telugu Video Factory API - Fixed v3 Speakers")
 
 SARVAM_API_KEY = os.getenv("SARVAM_API_KEY")
 
+# FIXED: Bulbul v3 VALID speakers only - from Sarvam Docs
+# Female: priya, kavya, shreya, roopa, tanya, shruti, etc
+# Male: aditya, amit, rohan, gokul, vijay, etc
 VOICE_PROFILES = {
-    "young_female": {"voice": "anushka", "pace": 1.0},
-    "young_male": {"voice": "abhilash", "pace": 1.0},
-    "middle_female": {"voice": "manisha", "pace": 0.95},
-    "middle_male": {"voice": "karun", "pace": 0.95},
-    "old_female": {"voice": "manisha", "pace": 0.85},
-    "old_male": {"voice": "karun", "pace": 0.85},
-    "kid_female": {"voice": "vidya", "pace": 1.15},
-    "kid_male": {"voice": "arya", "pace": 1.15},
+    "young_female": {"voice": "priya", "pace": 1.0},      # was anushka - invalid
+    "young_male": {"voice": "aditya", "pace": 1.0},       # was abhilash - invalid
+    "middle_female": {"voice": "kavya", "pace": 0.95},    # soft mother
+    "middle_male": {"voice": "rohan", "pace": 0.95},      # father
+    "old_female": {"voice": "roopa", "pace": 0.85},       # ammamma - slow
+    "old_male": {"voice": "gokul", "pace": 0.85},         # thathayya - slow
+    "kid_female": {"voice": "tanya", "pace": 1.15},       # chinna pap
+    "kid_male": {"voice": "aayan", "pace": 1.15},         # chinna babu
 }
 
 class VideoRequest(BaseModel):
     channel: str
     topic: str
-    voice: str = "anushka"
+    voice: str = "priya"
     id: str = "1"
 
 def detect_characters_fast(script: str):
-    """No API call - super fast, no RAM"""
     fallback = {}
     names = re.findall(r'([A-Za-z\u0C00-\u0C7F]+)\s*:', script)
     for n in names:
         n = n.strip()
         n_low = n.lower()
-        if any(x in n_low for x in ['amma','avva','bomma','mother']): fallback[n] = {"gender":"female","age_group":"old"}
-        elif any(x in n_low for x in ['thatha','nanna','father','tata']): fallback[n] = {"gender":"male","age_group":"old"}
-        elif any(x in n_low for x in ['chinna','chintu','pilla','babu','pappu','kid']): fallback[n] = {"gender":"male","age_group":"kid"}
-        elif n_low.endswith('a') or n_low in ['anushka','priya','sita','geeta','manisha','vidya']: fallback[n] = {"gender":"female","age_group":"young"}
+        if any(x in n_low for x in ['amma','avva','bomma','mother','roopa']): fallback[n] = {"gender":"female","age_group":"old"}
+        elif any(x in n_low for x in ['thatha','nanna','father','tata','gokul']): fallback[n] = {"gender":"male","age_group":"old"}
+        elif any(x in n_low for x in ['chinna','chintu','pilla','babu','pappu','kid','aayan','tanya']): 
+            # guess kid gender by name ending
+            if n_low.endswith('a') or 'tanya' in n_low: fallback[n] = {"gender":"female","age_group":"kid"}
+            else: fallback[n] = {"gender":"male","age_group":"kid"}
+        elif n_low.endswith('a') or n_low in ['priya','kavya','sita','geeta','roopa','tanya']: fallback[n] = {"gender":"female","age_group":"young"}
         else: fallback[n] = {"gender":"male","age_group":"young"}
     return fallback
 
@@ -55,17 +60,26 @@ def get_voice_for_character(gender, age_group):
     return profile
 
 def generate_sarvam_audio(text, voice_name, pace, audio_file):
+    if not SARVAM_API_KEY:
+        raise Exception("SARVAM_API_KEY missing in ENV")
+    
     url = "https://api.sarvam.ai/text-to-speech"
-    headers = {"api-subscription-key": SARVAM_API_KEY}
+    headers = {
+        "api-subscription-key": SARVAM_API_KEY,
+        "Content-Type": "application/json"
+    }
+    # CORRECT payload as per Sarvam Docs - inputs array
     payload = {
         "inputs": [text],
         "target_language_code": "te-IN",
-        "speaker": voice_name,
-        "model": "bulbul:v3",
+        "speaker": voice_name.lower(),  # must be lowercase
         "pace": pace,
-        "speech_sample_rate": 22050
+        "model": "bulbul:v3"
     }
+    print(f"Sarvam Request: speaker={voice_name}, text={text[:30]}")
     r = requests.post(url, json=payload, headers=headers, timeout=30)
+    if r.status_code != 200:
+        print(f"Sarvam ERROR {r.status_code}: {r.text}")
     r.raise_for_status()
     data = r.json()
     audio_b64 = data["audios"][0]
@@ -74,7 +88,6 @@ def generate_sarvam_audio(text, voice_name, pace, audio_file):
     return True
 
 def create_background_image(channel, topic, width=720, height=1280):
-    """Single image - no moviepy clips - very low RAM"""
     img = Image.new('RGB', (width, height), (15, 23, 42))
     draw = ImageDraw.Draw(img)
     try:
@@ -84,9 +97,7 @@ def create_background_image(channel, topic, width=720, height=1280):
         font_channel = ImageFont.load_default()
         font_topic = ImageFont.load_default()
     
-    # Channel - top
     draw.text((width//2, 150), channel[:30], font=font_channel, fill=(255,221,0), anchor="mm")
-    # Topic - middle with wrap
     words = topic[:250].split()
     lines = []
     line = ""
@@ -109,11 +120,11 @@ def create_background_image(channel, topic, width=720, height=1280):
 
 @app.get("/")
 def home():
-    return {"status": "Telugu Video Factory API Running OK - Lightweight", "channels": "Unlimited", "ram": "50MB Optimized", "daily_capacity": "10+ videos"}
+    return {"status": "OK - Fixed v3 Speakers", "speakers": "priya,aditya,kavya,roopa,gokul,tanya,aayan", "ram": "50MB"}
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "memory": "optimized"}
+    return {"status": "ok"}
 
 @app.post("/generate")
 async def generate_video(req: VideoRequest):
@@ -127,7 +138,6 @@ async def generate_video(req: VideoRequest):
     temp_audios = []
     
     try:
-        # 1. Fast character detection - no heavy API
         detected_chars = detect_characters_fast(req.topic)
         print(f"Detected: {detected_chars}")
 
@@ -148,33 +158,25 @@ async def generate_video(req: VideoRequest):
         if not dialogues:
             dialogues = [("Narrator", req.topic, VOICE_PROFILES["young_female"])]
 
-        # 2. Generate each audio - one by one (low RAM)
         for idx, (char_name, dia_text, vp) in enumerate(dialogues):
             tmp = f"/tmp/{safe}_{uid}_{idx}.mp3"
             print(f"Audio {idx+1}/{len(dialogues)} for {char_name} ({vp['voice']})")
             try:
-                if SARVAM_API_KEY:
-                    generate_sarvam_audio(dia_text, vp['voice'], vp['pace'], tmp)
-                else:
-                    # Fallback silent audio 1 sec if no key (to avoid crash)
-                    subprocess.run(["ffmpeg", "-y", "-f", "lavfi", "-i", "anullsrc=r=22050:cl=mono", "-t", "1", tmp], capture_output=True)
+                generate_sarvam_audio(dia_text, vp['voice'], vp['pace'], tmp)
                 temp_audios.append(tmp)
             except Exception as e:
                 print(f"Audio failed {char_name}: {e}")
                 continue
 
         if not temp_audios:
-            return {"error": "Audio generation failed"}
+            return {"error": "Audio generation failed - check SARVAM_API_KEY and logs"}
 
-        # 3. Concat audios using ffmpeg - NO RAM (disk only)
         with open(list_file, "w") as f:
             for tf in temp_audios:
                 f.write(f"file '{tf}'\n")
         
-        # Use ffmpeg concat demuxer - super lightweight
         subprocess.run(["ffmpeg", "-y", "-f", "concat", "-safe", "0", "-i", list_file, "-c", "copy", audio_file], check=True, capture_output=True)
         
-        # Get duration
         result = subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", audio_file], capture_output=True, text=True)
         try:
             duration = float(result.stdout.strip())
@@ -182,11 +184,8 @@ async def generate_video(req: VideoRequest):
             duration = 5.0
         duration = max(5.0, duration)
 
-        # 4. Create single background image (no moviepy)
         bg_image = create_background_image(req.channel, req.topic, 720, 1280)
 
-        # 5. Create video using ffmpeg only - NO moviepy (saves 300MB RAM)
-        # ffmpeg -loop 1 -i image -i audio -c:v libx264 -t duration -pix_fmt yuv420p -shortest
         cmd = [
             "ffmpeg", "-y",
             "-loop", "1",
@@ -203,7 +202,6 @@ async def generate_video(req: VideoRequest):
         ]
         subprocess.run(cmd, check=True, capture_output=True)
         
-        # Cleanup temp files
         try:
             os.remove(bg_image)
             os.remove(list_file)
