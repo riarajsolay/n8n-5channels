@@ -1,16 +1,11 @@
-FROM python:3.11-slim
+FROM n8nio/n8n:latest
 
-RUN apt-get update && apt-get install -y ffmpeg fonts-dejavu && rm -rf /var/lib/apt/lists/*
+# root user loki velli ffmpeg install chestunnam
+USER root
+RUN apk update && apk add --no-cache ffmpeg
 
-WORKDIR /app
-
-RUN pip install --no-cache-dir fastapi uvicorn edge-tts moviepy==1.0.3 Pillow requests imageio-ffmpeg
-
-COPY video_api.py .
-
-EXPOSE 10000
-
-CMD ["uvicorn", "video_api:app", "--host", "0.0.0.0", "--port", "10000"]
+# malli normal user ki vacheyali
+USER node
 
 
 
